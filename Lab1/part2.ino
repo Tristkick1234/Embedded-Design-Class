@@ -7,7 +7,7 @@ int* IO_MUX_GPIO11 = (int*) 0x60090030;
 
 void setup() {
   *GPIO_OUTPUT_EN = (1 << 7); //setting the output to be gpio7
-  *IO_MUX_GPIO11 = (1 << 4);
+  *IO_MUX_GPIO11 = (1 << 9) | (1 << 7); // ORs the input en and input pulldown bit
 }
 
 void loop() {
