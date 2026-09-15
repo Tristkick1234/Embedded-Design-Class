@@ -3,7 +3,7 @@ int BACK = 48;
 int R = 35;
 int G = 36;
 int B = 37;
-int state = 0;
+int state = -1;
 
 void setup() {
   pinMode(R, OUTPUT);
@@ -21,13 +21,14 @@ void loop() {
     }
     // check what state we're in
     if (state == 0) {
-     //then go red 
+     digitalWrite(R, HIGH);
     } else if (state == 1) {
-      //Green
+      digitalWrite(G, HIGH);
     } else if (state == 2) {
-      //Blue
+      digitalWrite(B, HIGH);
     } else if (state == 3) {
-      //Yellow 
+      digitalWrite(R, HIGH);
+      digitalWrite(G, HIGH);
     } 
   } else if (digitalRead(BACK) == 1) {
     state--;
@@ -35,13 +36,14 @@ void loop() {
       state = 3;
     } 
     if (state == 3) {
-      // Yellow
+      digitalWrite(R, HIGH);
+      digitalWrite(G, HIGH);
     } else if (state == 2) {
-      //Blue
+      digitalWrite(B, HIGH);
     } else if (state == 1) {
-      //Green
+      digitalWrite(G, HIGH);
     } else if (state == 0) {
-      //red
+      digitalWrite(R, HIGH);
     }
   }
 }
