@@ -6,15 +6,19 @@ int B = 37;
 int state = 0;
 
 void setup() {
-  pinMode(RED, OUTPUT);
-  pinMode(GRN, OUTPUT);
-  pinMode(BLUE, OUTPUT);
-  pinMode(BUTTON47, INPUT_PULLDOWN);
-  pinMode(BUTTON48, INPUT_PULLDOWN);
+  pinMode(R, OUTPUT);
+  pinMode(G, OUTPUT);
+  pinMode(B, OUTPUT);
+  pinMode(FORWARD, INPUT_PULLDOWN);
+  pinMode(BACK, INPUT_PULLDOWN);
 }
 
 void loop() {
   if (digitalRead(FORWARD) == 1) {
+    state++;
+    if (state > 3) {
+      state = 0;
+    }
     // check what state we're in
     if (state == 0) {
      //then go red 
@@ -24,8 +28,20 @@ void loop() {
       //Blue
     } else if (state == 3) {
       //Yellow 
-    } else {
-      state = 0;
+    } 
+  } else if (digitalRead(BACK) == 1) {
+    state--;
+    if (state < 0) {
+      state = 3;
+    } 
+    if (state == 3) {
+      // Yellow
+    } else if (state == 2) {
+      //Blue
+    } else if (state == 1) {
+      //Green
+    } else if (state == 0) {
+      //red
+    }
   }
-    state++;
 }
