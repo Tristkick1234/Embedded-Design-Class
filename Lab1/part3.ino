@@ -11,10 +11,14 @@ void setup() {
   pinMode(B, OUTPUT);
   pinMode(FORWARD, INPUT_PULLDOWN);
   pinMode(BACK, INPUT_PULLDOWN);
+  Serial.begin(9600);
 }
 
 void loop() {
   if (digitalRead(FORWARD) == 1) {
+    delay(1000);
+    Serial.println("forward");
+    Serial.println(state);
     state++;
     if (state > 3) {
       state = 0;
@@ -22,15 +26,23 @@ void loop() {
     // check what state we're in
     if (state == 0) {
      digitalWrite(R, HIGH);
-    } else if (state == 1) {
+    } 
+    if (state == 1) {
       digitalWrite(G, HIGH);
-    } else if (state == 2) {
+    } 
+    if (state == 2) {
       digitalWrite(B, HIGH);
-    } else if (state == 3) {
+    } 
+    if (state == 3) {
       digitalWrite(R, HIGH);
       digitalWrite(G, HIGH);
     } 
-  } else if (digitalRead(BACK) == 1) {
+  }
+  
+  if (digitalRead(BACK) == 1) {
+    delay(1000);
+    Serial.println("back");
+    Serial.println(state);
     state--;
     if (state < 0) {
       state = 3;
@@ -38,12 +50,16 @@ void loop() {
     if (state == 3) {
       digitalWrite(R, HIGH);
       digitalWrite(G, HIGH);
-    } else if (state == 2) {
+    } 
+    if (state == 2) {
       digitalWrite(B, HIGH);
-    } else if (state == 1) {
+    }
+    if (state == 1) {
       digitalWrite(G, HIGH);
-    } else if (state == 0) {
+    } 
+    if (state == 0) {
       digitalWrite(R, HIGH);
     }
   }
+  // Serial.println("Check Serial Monitor");
 }
