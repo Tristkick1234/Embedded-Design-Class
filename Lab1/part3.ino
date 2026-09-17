@@ -16,49 +16,71 @@ void setup() {
 
 void loop() {
   if (digitalRead(FORWARD) == 1) {
-    delay(1000);
-    Serial.println("forward");
-    Serial.println(state);
+    delay(500);
     state++;
     if (state > 3) {
       state = 0;
     }
+    Serial.println("forward");
+    Serial.println(state);
     // check what state we're in
     if (state == 0) {
+      //RED
      digitalWrite(R, HIGH);
+     digitalWrite(G, LOW);
+     digitalWrite(B, LOW);
     } 
     if (state == 1) {
+      //GREEN
+      digitalWrite(R, LOW);
       digitalWrite(G, HIGH);
+      digitalWrite(B, LOW);
     } 
     if (state == 2) {
+      //BLUE
+      digitalWrite(R, LOW);
+      digitalWrite(G, LOW);
       digitalWrite(B, HIGH);
     } 
     if (state == 3) {
+      //YELLOW
       digitalWrite(R, HIGH);
       digitalWrite(G, HIGH);
+      digitalWrite(B, LOW);
     } 
   }
   
   if (digitalRead(BACK) == 1) {
-    delay(1000);
-    Serial.println("back");
-    Serial.println(state);
+    delay(500);
     state--;
     if (state < 0) {
       state = 3;
     } 
+    Serial.println("back");
+    Serial.println(state);
     if (state == 3) {
+      //YELLOW
       digitalWrite(R, HIGH);
       digitalWrite(G, HIGH);
+      digitalWrite(B, LOW);
     } 
     if (state == 2) {
+      //BLUE
+      digitalWrite(R, LOW);
+      digitalWrite(G, LOW);
       digitalWrite(B, HIGH);
     }
     if (state == 1) {
+      //GREEN
+      digitalWrite(R, LOW);
       digitalWrite(G, HIGH);
+      digitalWrite(B, LOW);
     } 
     if (state == 0) {
+      //RED
       digitalWrite(R, HIGH);
+      digitalWrite(G, LOW);
+      digitalWrite(B, LOW);
     }
   }
   // Serial.println("Check Serial Monitor");
