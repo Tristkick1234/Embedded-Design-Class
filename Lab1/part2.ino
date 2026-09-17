@@ -1,3 +1,25 @@
+// const int ledChannel = 0;     
+// const int freq = 4000;        // Frequency in Hz (5 kHz)
+// const int resolution = 8;     // 8-bit resolution (0-255)
+// const int pin = 18;           // Output GPIO pin
+
+// void setup() {
+//   // Configure LEDC functional 
+//   ledcSetup(ledChannel, freq, resolution);
+  
+//   // Attach the channel to the GPIO to be controlled
+//   ledcAttachPin(pin, ledChannel);
+  
+//   // Set a 50% duty cycle (128 for 8-bit resolution)
+//   ledcWrite(ledChannel, 128); 
+// }
+
+// void loop() {
+//   // Waveform runs automatically in the background
+// }
+
+
+
 volatile uint32_t* MY_GPIO_OUTPUT_EN  = (volatile uint32_t*) 0x60091024; 
 volatile uint32_t* MY_GPIO_OUTPUT_SET = (volatile uint32_t*) 0x60091008; 
 volatile uint32_t* MY_GPIO_OUTPUT_CLR = (volatile uint32_t*) 0x6009100C; 
@@ -12,34 +34,27 @@ void setup() {
   *MY_IO_MUX_GPIO11 &= ~(1 << 9);
   *MY_IO_MUX_GPIO11 &= ~(1 << 8);
   *MY_IO_MUX_GPIO11 &= ~(1 << 7);
-  // 2. Fixed: Added (1 << 12) to actually route the pin to the GPIO matrix
+  //clear
+
   *MY_IO_MUX_GPIO11 |=  ((1 << 12) | (1 << 9) | (1 << 7));
-
-
-  // --- CONFIGURE GPIO 7 (OUTPUT LED) ---
-  // 3. Fixed: Added IO MUX configuration for the output pin
-  // Clear function bits (12-14)
-  *MY_IO_MUX_GPIO7 &= ~(7 << 12);
-  // Route pin to GPIO matrix (MCU_SEL = 1)
   *MY_IO_MUX_GPIO7 |= (1 << 12);
   
-  // Now logically enable the output in the GPIO Matrix
+  //enable output in GPIO matrix
   *MY_GPIO_OUTPUT_EN = (1 << 7); 
 }
 
 void loop() {
-  // Your friend's read logic (*MY_GPIO_INPUT & (1 << 11)) works perfectly.
-  // It returns 0 if unpressed, and 2048 if pressed.
   
+  Serial.println(*MY_GPIO_INPUT & (1 << 11));
+  //0 if low, 2048 if high;
   if ((*MY_GPIO_INPUT & (1 << 11)) == 0) {
-    // If button is LOW, turn LED OFF (Write 1 to clear register)
+    //If button is LOW, turn LED OFF 
     *MY_GPIO_OUTPUT_CLR = (1 << 7);
-    Serial.println(*MY_GPIO_INPUT);
-    delay(100);
+
   } else {
-    // If button is HIGH, turn LED ON (Write 1 to set register)
+    //If button is HIGH, turn LED ON 
     *MY_GPIO_OUTPUT_SET = (1 << 7);
-    Serial.println(*MY_GPIO_INPUT);
-    delay(100);
+    
   }
+  delay(100);
 }
