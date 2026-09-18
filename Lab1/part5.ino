@@ -1,4 +1,3 @@
-
 #define UP     11
 #define DOWN   1
 #define LEFT   7
@@ -6,7 +5,8 @@
 #define CENTER 4
 
 void setup() {
-  Serial.begin(9600);
+  // 115200 is much more stable for ESP32-C6 than 9600
+  Serial.begin(115200); 
   
   pinMode(UP, INPUT_PULLUP);
   pinMode(DOWN, INPUT_PULLUP);
@@ -18,16 +18,30 @@ void setup() {
 void loop() {
   String out = "";
 
-  if (digitalRead(CENTER) == LOW) out += "Center ";
-  if (digitalRead(UP) == LOW)     out += "Top-";
-  if (digitalRead(DOWN) == LOW)   out += "Bottom-";
-  if (digitalRead(LEFT) == LOW)   out += "Left";
-  if (digitalRead(RIGHT) == LOW)  out += "Right";
+  // 1. Check Center independently
+  if (digitalRead(CENTER) == LOW) {
+    out += "[Center]";
+  }
 
-  if (out.endsWith("-")) out.remove(out.length() - 1);
+  // 2. Check Vertical
+  if (digitalRead(UP) == LOW) {
+    out += "Top";
+  } else if (digitalRead(DOWN) == LOW) {
+    out += "Bottom";
+  }
 
+  // 3. Check Horizontal & bridge with a dash if a vertical direction was already added
+  if (digitalRead(LEFT) == LOW) {
+    if (out.length() > 0 && !out.endsWith(" ")) out += "-";
+    out += "Left";
+  } else if (digitalRead(RIGHT) == LOW) {
+    if (out.length() > 0 && !out.endsWith(" ")) out += "-";
+    out += "Right";
+  }
+
+  // 4. Print the combined result
   if (out != "") {
     Serial.println(out);
-    delay(200);
+    delay(200); // Simple spam protection
   }
 }
