@@ -1,25 +1,3 @@
-// const int ledChannel = 0;     
-// const int freq = 4000;        // Frequency in Hz (5 kHz)
-// const int resolution = 8;     // 8-bit resolution (0-255)
-// const int pin = 18;           // Output GPIO pin
-
-// void setup() {
-//   // Configure LEDC functional 
-//   ledcSetup(ledChannel, freq, resolution);
-  
-//   // Attach the channel to the GPIO to be controlled
-//   ledcAttachPin(pin, ledChannel);
-  
-//   // Set a 50% duty cycle (128 for 8-bit resolution)
-//   ledcWrite(ledChannel, 128); 
-// }
-
-// void loop() {
-//   // Waveform runs automatically in the background
-// }
-
-
-
 volatile uint32_t* MY_GPIO_OUTPUT_EN  = (volatile uint32_t*) 0x60091024; 
 volatile uint32_t* MY_GPIO_OUTPUT_SET = (volatile uint32_t*) 0x60091008; 
 volatile uint32_t* MY_GPIO_OUTPUT_CLR = (volatile uint32_t*) 0x6009100C; 
