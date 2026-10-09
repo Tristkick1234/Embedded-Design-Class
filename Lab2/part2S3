@@ -1,0 +1,62 @@
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+
+#define SDA_PIN 8
+#define SCL_PIN 9
+#define LED_PIN 38
+#define S3_ADDRESS 0x42
+
+Adafruit_NeoPixel led(1, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+volatile int movement = 0;
+
+void receiveData(int count) {
+  if (Wire.available()) {
+    movement = Wire.read();
+  }
+
+  while (Wire.available()) {
+    Wire.read();
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  led.begin();
+  led.setBrightness(40);
+  led.clear();
+  led.show();
+
+  Wire.onReceive(receiveData);
+  Wire.begin((uint8_t)S3_ADDRESS, SDA_PIN, SCL_PIN, 100000);
+}
+
+void loop() {
+  int direction = movement;
+
+  if (direction == 1) {
+    led.setPixelColor(0, led.Color(255,0,0)); // Forward red
+  }
+  else if (direction == 2) {
+    led.setPixelColor(0, led.Color(0,0,255)); // Backward blue
+  }
+  else if (direction == 3) {
+    led.setPixelColor(0, led.Color(0,255,0)); // Left green
+  }
+  else if (direction == 4) {
+    led.setPixelColor(0, led.Color(255,255,0)); // Right yellow
+  }
+  else if (direction == 5) {
+    led.setPixelColor(0, led.Color(255,0,255)); // Up purple
+  }
+  else if (direction == 6) {
+    led.setPixelColor(0, led.Color(0,255,255)); // Down cyan
+  }
+  else {
+    led.clear();
+  }
+
+  led.show();
+  delay(50);
+}
