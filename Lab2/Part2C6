@@ -1,0 +1,88 @@
+#include <Wire.h>
+#include <Adafruit_ICM20948.h>
+#include <Adafruit_Sensor.h>
+
+#define SDA_PIN 6
+#define SCL_PIN 7
+#define S3_ADDRESS 0x42
+
+Adafruit_ICM20948 imu;
+
+float restZ = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Wire.begin(SDA_PIN, SCL_PIN, 100000);
+
+  if (!imu.begin_I2C(0x69, &Wire) &&
+      !imu.begin_I2C(0x68, &Wire)) {
+    Serial.println("IMU not found!");
+    while (1) {
+      delay(100);
+    }
+  }
+
+  Serial.println("Keep IMU flat");
+  delay(1000);
+
+  sensors_event_t accel, gyro, temp, mag;
+  float total = 0;
+
+  for (int i = 0; i < 30; i++) {
+    imu.getEvent(&accel, &gyro, &temp, &mag);
+    total += accel.acceleration.z;
+    delay(20);
+  }
+
+  restZ = total / 30.0;
+  Serial.println("Ready!");
+}
+
+void loop() {
+  sensors_event_t accel, gyro, temp, mag;
+  imu.getEvent(&accel, &gyro, &temp, &mag);
+
+  float x = accel.acceleration.x;
+  float y = accel.acceleration.y;
+  float z = accel.acceleration.z - restZ;
+
+  int direction = 0;
+
+  if (x > 4) {
+    direction = 3; // Left
+  }
+  else if (x < -4) {
+    direction = 4; // Right
+  }
+  else if (y > 4) {
+    direction = 1; // Forward
+  }
+  else if (y < -4) {
+    direction = 2; // Backward
+  }
+  else if (z > 3) {
+    direction = 5; // Up
+  }
+  else if (z < -3) {
+    direction = 6; // Down
+  }
+
+  Wire.beginTransmission(S3_ADDRESS);
+  Wire.write(direction);
+  byte error = Wire.endTransmission();
+
+  Serial.print("X: ");
+  Serial.print(x);
+  Serial.print(" Y: ");
+  Serial.print(y);
+  Serial.print(" Z: ");
+  Serial.print(z);
+  Serial.print(" Direction: ");
+  Serial.print(direction);
+  Serial.print(" I2C: ");
+  Serial.println(error);
+
+  delay(100);
+}
