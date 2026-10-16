@@ -10,6 +10,7 @@
  *   LCD SDA -> GPIO7   (FSPID/MOSI)   LCD DC  -> GPIO1
  *   LCD RES -> GPIO3                  LCD BLK -> 3V3,  VCC -> 3V3,  GND -> GND
  *   Nav: UP 23, DOWN 22, LEFT 21, RIGHT 20, CENTER 19, COMMON -> GND
+ * Ai was used in parts of this code to help design the methods which replace SPI Library
  */
 #include <Arduino.h>
 
