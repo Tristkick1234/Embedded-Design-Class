@@ -2,10 +2,10 @@
   WiFiAccessPoint.ino creates a WiFi access point and provides a web server on it.
 
   Steps:
-  1. Connect to the access point "yourAp"
-  2. Point your web browser to http://192.168.4.1/H to turn the LED on or http://192.168.4.1/L to turn it off
-     OR
-     Run raw TCP "GET /H" and "GET /L" on PuTTY terminal with 192.168.4.1 as IP address and 80 as port
+  1. Connect to the access point
+  2. Point your web browser to http://192.168.4.1/
+  3. Press the CHANGE button: the NeoPixel and the webpage both step to the
+     next color in the colors array (orange, red, blue, green, yellow, purple).
 
   Created for arduino-esp32 on 04 July, 2018
   by Elochukwu Ifediora (fedy0)
@@ -18,19 +18,41 @@
 #include <Adafruit_NeoPixel.h>
 
 #define PIN_NEOPIXEL 38  // Set the GPIO pin where you connected your test LED or comment this line out if your dev board has a built-in LED
-#define NUM_LEDS    1
+#define NUM_LEDS 1
 
 // Set these to your desired credentials.
 const char *ssid = "BOBASTICSIDEYE!";
 const char *password = "batflash05";
 
+// ---- Colors array (the "states") ----
+const int NUM_COLORS = 6;
+const char *colorNames[NUM_COLORS] = { "orange", "red", "blue", "green", "yellow", "purple" };
+const uint8_t colorRGB[NUM_COLORS][3] = {   // NeoPixel colors
+  { 255, 60, 0 },     // orange
+  { 255, 0, 0 },      // red
+  { 0, 0, 255 },      // blue
+  { 0, 255, 0 },      // green
+  { 255, 180, 0 },    // yellow
+  { 140, 0, 255 }     // purple
+};
+const char *colorHex[NUM_COLORS] = {        // matching webpage colors
+  "#FF8C00", "#E00000", "#0000FF", "#00A000", "#FFD700", "#8000FF"
+};
+int colorIndex = 0;                         // current state
+
 NetworkServer server(80);
 Adafruit_NeoPixel pixel(NUM_LEDS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
+void showColor() {
+  pixel.setPixelColor(0, pixel.Color(colorRGB[colorIndex][0], colorRGB[colorIndex][1], colorRGB[colorIndex][2]));
+  pixel.show();
+}
+
 void setup() {
-  
-  pixel.begin();           // Initialize NeoPixel
-  pixel.setBrightness(20); // Make it less bright!
+
+  pixel.begin();            // Initialize NeoPixel
+  pixel.setBrightness(20);  // Make it less bright!
+  showColor();              // start on the first color (orange)
 
   Serial.begin(115200);
   Serial.println();
@@ -40,7 +62,8 @@ void setup() {
   // a valid password must have more than 7 characters
   if (!WiFi.softAP(ssid, password)) {
     log_e("Soft AP creation failed.");
-    while (1);
+    while (1)
+      ;
   }
   IPAddress myIP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
@@ -72,8 +95,18 @@ void loop() {
             client.println();
 
             // the content of the HTTP response follows the header:
-            client.print("Click <a href=\"/H\">here</a> to turn ON the LED.<br>");
-            client.print("Click <a href=\"/L\">here</a> to turn OFF the LED.<br>");
+            // one button; page background matches the current color
+            client.print("<body style=\"font-family:Helvetica,Arial,sans-serif;text-align:center;background:");
+            client.print("black");
+            client.print("\"><div style=\"background:white;display:inline-block;padding:20px 40px;margin-top:30px;border-radius:12px\">");
+            client.print("<h1>ESP32-Access-Point</h1>");
+            client.print("<p>State: ");
+            client.print(colorNames[colorIndex]);
+            client.print("</p>");
+            client.print("<a href=\"/C\"><button style=\"background:");
+            client.print(colorHex[colorIndex]);
+            client.print(";color:white;border:none;padding:16px 40px;font-size:28px\">CHANGE</button></a>");
+            client.print("</div></body>");
 
             // The HTTP response ends with another blank line:
             client.println();
@@ -86,18 +119,13 @@ void loop() {
           currentLine += c;      // add it to the end of the currentLine
         }
 
-        // Check to see if the client request was "GET /H" or "GET /L":
-        if (currentLine.endsWith("GET /H")) {
-            Serial.println("H was clicked");
-            pixel.setPixelColor(0, pixel.Color(255, 0, 0)); // Display Red
-            pixel.show();
-            delay(500);
-        }
-        if (currentLine.endsWith("GET /L")) {
-            Serial.println("L was clicked");
-            pixel.setPixelColor(0, pixel.Color(0, 0, 0));   // Off
-            pixel.show();
-            delay(500);
+        // Check to see if the client request was "GET /C" (the CHANGE button):
+        // step to the next color in the array, wrapping back to the start
+        if (currentLine.endsWith("GET /C")) {
+          colorIndex = (colorIndex + 1) % NUM_COLORS;
+          Serial.print("State -> ");
+          Serial.println(colorNames[colorIndex]);
+          showColor();
         }
       }
     }
