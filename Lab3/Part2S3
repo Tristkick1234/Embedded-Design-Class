@@ -1,0 +1,134 @@
+/* ECE4180 Part 2 - ESP32-S3 INDOOR controller
+ * Wiring: GPIO4 -> momentary pushbutton -> GND; RGB LED GPIO38 (verified).
+ * Requires Arduino-ESP32 core 3.x (ESP-NOW recv callback signature).
+ * ESP-NOW messages are broadcast on WiFi channel 1; both boards use same channel.
+ * Educational demo, NOT a secure home alarm (ESP-NOW broadcast is unencrypted).
+ */
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
+constexpr uint8_t BUTTON_PIN = 4;
+constexpr uint8_t RGB_PIN = 38;
+constexpr uint8_t CHANNEL = 1;
+constexpr uint32_t AUTO_LOCK_MS = 30000;
+constexpr uint32_t HEARTBEAT_MS = 500;
+constexpr uint32_t PEER_TIMEOUT_MS = 2500;
+constexpr uint32_t DEBOUNCE_MS = 45;
+constexpr uint32_t BLUE_FLASH_MS = 250;
+constexpr uint32_t MAGIC = 0x41802026;
+constexpr uint8_t NODE_ID = 1; // S3=1, C6=2
+const uint8_t BROADCAST[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+
+struct __attribute__((packed)) Packet {
+  uint32_t magic;
+  uint8_t from;
+  uint8_t armed;
+  uint32_t revision;
+};
+QueueHandle_t rxQueue;
+bool armed = true; // default safe state
+uint32_t revision = 0;
+uint8_t stateOwner = NODE_ID;
+uint32_t unlockedAt = 0;
+uint32_t lastPeerRx = 0;
+bool peerOnline = false;
+uint32_t flashUntil = 0;
+uint32_t lastTx = 0;
+int stableButton = HIGH;
+int rawButton = HIGH;
+uint32_t changedAt = 0;
+
+void flashBlue() { flashUntil = millis() + BLUE_FLASH_MS; }
+void rgb(uint8_t r, uint8_t g, uint8_t b) { neopixelWrite(RGB_PIN, r, g, b); }
+void showLed() {
+  if ((int32_t)(flashUntil - millis()) > 0) rgb(0, 0, 80);
+  else if (armed) rgb(80, 0, 0);
+  else rgb(0, 80, 0);
+}
+void publishState() {
+  Packet p{MAGIC, NODE_ID, uint8_t(armed), revision};
+  esp_err_t err = esp_now_send(BROADCAST, reinterpret_cast<const uint8_t*>(&p), sizeof(p));
+  if (err != ESP_OK) Serial.printf("ESP-NOW send error: %d\n", (int)err);
+  lastTx = millis();
+}
+void changeState(bool next, const char* source) {
+  if (armed == next) return;
+  armed = next;
+  ++revision;
+  stateOwner = NODE_ID;
+  if (!armed) unlockedAt = millis();
+  Serial.printf("%s: %s (revision %lu)\n", source, armed ? "ARMED" : "DISARMED", (unsigned long)revision);
+  publishState();
+}
+// Runs in Wi-Fi task, not loop(): enqueue only; never draw/print here.
+void onReceive(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  if (len != (int)sizeof(Packet) || !rxQueue) return;
+  Packet p;
+  memcpy(&p, data, sizeof(p));
+  if (p.magic != MAGIC || p.from != 2 || p.armed > 1) return;
+  xQueueSend(rxQueue, &p, 0);
+}
+void handlePacket(const Packet& p) {
+  lastPeerRx = millis();
+  if (!peerOnline) { peerOnline = true; Serial.println("C6 connected/reconnected"); flashBlue(); }
+  // Lamport-style monotonic version: tie broken by node ID.
+  if (p.revision > revision || (p.revision == revision && p.from > stateOwner)) {
+    bool wasArmed = armed;
+    armed = p.armed;
+    revision = p.revision;
+    stateOwner = p.from;
+    if (wasArmed && !armed) unlockedAt = millis();
+    Serial.printf("C6 sync -> %s (revision %lu)\n", armed ? "ARMED" : "DISARMED", (unsigned long)revision);
+  }
+}
+void initEspNow() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_err_t ch = esp_wifi_set_channel(CHANNEL, WIFI_SECOND_CHAN_NONE);
+  if (ch != ESP_OK) Serial.printf("Set WiFi channel failed: %d\n", (int)ch);
+  if (esp_now_init() != ESP_OK) { Serial.println("ESP-NOW init FAILED"); while (true) delay(1000); }
+  esp_now_register_recv_cb(onReceive);
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, BROADCAST, 6);
+  peer.channel = CHANNEL;
+  peer.ifidx = WIFI_IF_STA;
+  peer.encrypt = false;
+  if (esp_now_add_peer(&peer) != ESP_OK) Serial.println("Broadcast peer add FAILED");
+  Serial.println("ESP-NOW ready; channel 1");
+}
+void setup() {
+  Serial.begin(115200);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  rgb(80,0,0);
+  rxQueue = xQueueCreate(20, sizeof(Packet));
+  if (!rxQueue) { Serial.println("Queue allocation FAILED"); while(true) delay(1000); }
+  initEspNow();
+  Serial.println("S3 indoor ready: GPIO4 toggles arm/disarm; red=armed green=disarmed");
+  publishState();
+}
+void loop() {
+  const uint32_t now = millis();
+  // Debounce a pushbutton (one toggle per physical press).
+  int sample = digitalRead(BUTTON_PIN);
+  if (sample != rawButton) { rawButton = sample; changedAt = now; }
+  if (now - changedAt >= DEBOUNCE_MS && stableButton != rawButton) {
+    stableButton = rawButton;
+    if (stableButton == LOW) changeState(!armed, "Indoor button");
+  }
+  Packet p;
+  while (xQueueReceive(rxQueue, &p, 0) == pdTRUE) handlePacket(p);
+  // Every disarm starts a 30-second deadline on this board too.
+  if (!armed && now - unlockedAt >= AUTO_LOCK_MS) changeState(true, "Auto-lock 30s");
+  if (peerOnline && now - lastPeerRx > PEER_TIMEOUT_MS) {
+    peerOnline = false;
+    Serial.println("C6 disconnected (indoor controller remains functional)");
+    flashBlue();
+  }
+  if (now - lastTx >= HEARTBEAT_MS) publishState();
+  showLed();
+  delay(5);
+}
