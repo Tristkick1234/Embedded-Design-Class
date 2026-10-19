@@ -27,9 +27,9 @@ constexpr uint32_t MAGIC=0x41802026;
 constexpr uint8_t NODE_ID=2;
 constexpr char CODE[] = "1234"; // Change to your desired 4-digit demo passcode
 const uint8_t BROADCAST[6]={0xff,0xff,0xff,0xff,0xff,0xff};
-// MPR121 electrodes 0..11 mapped like a telephone keypad:
-// 0 1 2 => 1 2 3, 3 4 5 => 4 5 6, 6 7 8 => 7 8 9, 9 10 11 => * 0 #
-const char KEYS[12]={'1','2','3','4','5','6','7','8','9','*','0','#'};
+// Physical MPR121 pad numbers match the digit entered.
+// Pads 0..9 enter digits; pads 10 and 11 clear an incomplete code.
+const char KEYS[12]={'0','1','2','3','4','5','6','7','8','9','C','C'};
 struct __attribute__((packed)) Packet {uint32_t magic; uint8_t from; uint8_t armed; uint32_t revision;};
 QueueHandle_t rxQueue;
 Adafruit_MPR121 cap;
@@ -115,24 +115,29 @@ void showScreen(){
   tft.print(entered); // Show typed passcode for lab demo (not masked).
   tft.setCursor(10,165);
   tft.setTextSize(1);
-  tft.print("*=clear  #=enter");
-  tft.setCursor(10,188);
+  tft.print("1 2 3 4 = unlock");
+  tft.setCursor(10,179);
+  tft.print("Pads 10/11 = clear");
+  tft.setCursor(10,193);
   tft.print(peerOnline?"S3 linked":"S3 offline - local OK");
-  tft.setCursor(10,210);
+  tft.setCursor(10,215);
   tft.print("Pad: ");tft.print(keypadReady?"READY":"NOT FOUND");
 }
 void touchKey(char key){
   Serial.printf("MPR121 key %c\n",key);
-  // ANY new touch after unlocking re-arms, per assignment.
+  // Any NEW touch after unlocking re-arms, as required by the lab.
   if(!armed){changeState(true,"Touch after unlock");return;}
-  if(key=='*'){entered="";redraw=true;return;}
-  if(key=='#'){
-    if(entered==CODE) changeState(false,"Correct passcode");
-    else { Serial.println("Invalid passcode"); entered=""; redraw=true; }
-    return;
+  if(key=='C'){entered="";redraw=true;Serial.println("Entry cleared");return;}
+  if(key>='0'&&key<='9'&&entered.length()<4){
+    entered+=key;
+    redraw=true;
+    if(entered.length()==4){
+      if(entered==CODE) changeState(false,"Correct passcode");
+      else {Serial.println("Invalid passcode");entered="";redraw=true;}
+    }
   }
-  if(key>='0'&&key<='9'&&entered.length()<4){entered+=key;redraw=true;}
 }
+
 void setup(){
   Serial.begin(115200);
   rgb(80,0,0);
@@ -146,7 +151,9 @@ void setup(){
   rxQueue=xQueueCreate(20,sizeof(Packet));
   if(!rxQueue){Serial.println("Queue allocation FAILED");while(true)delay(1000);}
   initEspNow();
-  Serial.println("C6 keypad ready: type 1234 # to unlock; any next touch locks");
+  Serial.println("C6 keypad ready: touch pads 1,2,3,4 to unlock automatically; any next touch locks");
+  Serial.println("Touch debug: each new electrode press/release prints below.");
+  if (!keypadReady) Serial.println("Touch debug unavailable: MPR121 did not initialize. Check SDA=4, SCL=5, power, and 0x5A address.");
   publishState();
   showScreen();
 }
@@ -156,9 +163,19 @@ void loop(){
   while(xQueueReceive(rxQueue,&p,0)==pdTRUE)handlePacket(p);
   if(keypadReady){
     uint16_t current=cap.touched();
-    uint16_t newTouches=current & ~previousTouched;
-    previousTouched=current;
-    // Process one newly touched electrode; release before touching again.
+    uint16_t newTouches = current & ~previousTouched;
+    uint16_t releasedTouches = previousTouched & ~current;
+    previousTouched = current;
+    // Report EVERY newly pressed or released electrode to Serial Monitor.
+    for (uint8_t i = 0; i < 12; i++) {
+      if (newTouches & (1U << i)) {
+        Serial.printf("TOUCH PRESSED: pad %u, key '%c'\n", i, KEYS[i]);
+      }
+      if (releasedTouches & (1U << i)) {
+        Serial.printf("TOUCH RELEASED: pad %u, key '%c'\n", i, KEYS[i]);
+      }
+    }
+    // Keep the existing lock/passcode logic: handle only first new key per scan.
     for(uint8_t i=0;i<12;i++){
       if(newTouches&(1U<<i)){touchKey(KEYS[i]);break;}
     }
@@ -173,39 +190,3 @@ void loop(){
   showScreen();
   delay(15);
 }
-
-
-/*
-#include <Wire.h>
-#include <Adafruit_MPR121.h>
-
-#define SDA_PIN 6
-#define SCL_PIN 7
-
-Adafruit_MPR121 cap = Adafruit_MPR121();
-
-void setup() {
-  Serial.begin(115200);
-  while (!Serial) { delay(10); } 
-  
-  Wire.begin(SDA_PIN, SCL_PIN);
-
-  if (!cap.begin(0x5A)) {
-    Serial.println("MPR121 not found, check wiring?");
-    while (1);
-  }
-  
-  Serial.println("Starting raw data stream for all pads...");
-  delay(1000);
-}
-
-void loop() {
-  // Loop through all 12 capacitive sensing inputs
-  for (uint8_t i = 0; i < 12; i++) {
-    if (cap.filteredData(i) < 10) {
-      Serial.print(i);
-      Serial.println(" was pressed.");
-    }
-  }
-  delay(100); 
-}*/
