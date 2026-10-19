@@ -1,0 +1,175 @@
+/* ECE4180 Part 2 - ESP32-C6 OUTDOOR keypad controller
+ * MPR121: SDA=GPIO4, SCL=GPIO5, VCC=3V3, GND=GND, address 0x5A
+ * ST7789: SCL=6, SDA(MOSI)=7, DC=1, CS=0, RES=3, VCC=3V3, GND=GND, BLK=3V3
+ * Onboard RGB LED: GPIO8 (verify for your particular ESP32-C6 board).
+ * Arduino-ESP32 core 3.x; libraries: Adafruit MPR121, Adafruit GFX,
+ * Adafruit ST7735 and ST7789 (and their required dependencies).
+ * Demonstration only: broadcast ESP-NOW is not encrypted; fixed demo passcode.
+ */
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_MPR121.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
+constexpr uint8_t SDA_PIN=4, SCL_PIN=5;
+constexpr uint8_t LCD_SCLK=6, LCD_MOSI=7, LCD_DC=1, LCD_CS=0, LCD_RST=3;
+constexpr uint8_t RGB_PIN=8;
+constexpr uint8_t CHANNEL=1;
+constexpr uint32_t AUTO_LOCK_MS=30000, HEARTBEAT_MS=500, PEER_TIMEOUT_MS=2500, BLUE_FLASH_MS=250;
+constexpr uint32_t MAGIC=0x41802026;
+constexpr uint8_t NODE_ID=2;
+constexpr char CODE[] = "1234"; // Change to your desired 4-digit demo passcode
+const uint8_t BROADCAST[6]={0xff,0xff,0xff,0xff,0xff,0xff};
+// MPR121 electrodes 0..11 mapped like a telephone keypad:
+// 0 1 2 => 1 2 3, 3 4 5 => 4 5 6, 6 7 8 => 7 8 9, 9 10 11 => * 0 #
+const char KEYS[12]={'1','2','3','4','5','6','7','8','9','*','0','#'};
+struct __attribute__((packed)) Packet {uint32_t magic; uint8_t from; uint8_t armed; uint32_t revision;};
+QueueHandle_t rxQueue;
+Adafruit_MPR121 cap;
+Adafruit_ST7789 tft(&SPI,LCD_CS,LCD_DC,LCD_RST);
+bool keypadReady=false;
+bool armed=true;
+uint32_t revision=0;
+uint8_t stateOwner=NODE_ID;
+uint32_t unlockedAt=0, lastPeerRx=0, flashUntil=0, lastTx=0;
+bool peerOnline=false;
+uint16_t previousTouched=0;
+String entered="";
+bool redraw=true;
+
+void rgb(uint8_t r,uint8_t g,uint8_t b){neopixelWrite(RGB_PIN,r,g,b);}
+void flashBlue(){flashUntil=millis()+BLUE_FLASH_MS;}
+void showLed(){
+  if ((int32_t)(flashUntil-millis())>0) rgb(0,0,80);
+  else if (armed) rgb(80,0,0);
+  else rgb(0,80,0);
+}
+void publishState(){
+  Packet p{MAGIC,NODE_ID,uint8_t(armed),revision};
+  esp_err_t err=esp_now_send(BROADCAST,reinterpret_cast<const uint8_t*>(&p),sizeof(p));
+  if (err!=ESP_OK) Serial.printf("ESP-NOW send error: %d\n",(int)err);
+  lastTx=millis();
+}
+void changeState(bool next,const char* source){
+  if (armed==next) return;
+  armed=next; ++revision; stateOwner=NODE_ID;
+  entered=""; redraw=true;
+  if (!armed) unlockedAt=millis();
+  Serial.printf("%s: %s (revision %lu)\n",source,armed?"ARMED":"DISARMED",(unsigned long)revision);
+  publishState();
+}
+void onReceive(const esp_now_recv_info_t* info,const uint8_t* data,int len){
+  if (len!=(int)sizeof(Packet)||!rxQueue) return;
+  Packet p; memcpy(&p,data,sizeof(p));
+  if (p.magic!=MAGIC||p.from!=1||p.armed>1) return;
+  xQueueSend(rxQueue,&p,0);
+}
+void handlePacket(const Packet& p){
+  lastPeerRx=millis();
+  if(!peerOnline){peerOnline=true; Serial.println("S3 connected/reconnected");flashBlue();redraw=true;}
+  if(p.revision>revision||(p.revision==revision&&p.from>stateOwner)){
+    bool wasArmed=armed;
+    armed=p.armed; revision=p.revision; stateOwner=p.from;
+    if(wasArmed&&!armed) unlockedAt=millis();
+    entered=""; redraw=true;
+    Serial.printf("S3 sync -> %s (revision %lu)\n",armed?"ARMED":"DISARMED",(unsigned long)revision);
+  }
+}
+void initEspNow(){
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_err_t ch=esp_wifi_set_channel(CHANNEL,WIFI_SECOND_CHAN_NONE);
+  if(ch!=ESP_OK) Serial.printf("Set WiFi channel failed: %d\n",(int)ch);
+  if(esp_now_init()!=ESP_OK){Serial.println("ESP-NOW init FAILED");while(true)delay(1000);}
+  esp_now_register_recv_cb(onReceive);
+  esp_now_peer_info_t peer={};
+  memcpy(peer.peer_addr,BROADCAST,6);
+  peer.channel=CHANNEL; peer.ifidx=WIFI_IF_STA; peer.encrypt=false;
+  if(esp_now_add_peer(&peer)!=ESP_OK)Serial.println("Broadcast peer add FAILED");
+  Serial.println("ESP-NOW ready; channel 1");
+}
+void showScreen(){
+  if(!redraw)return;
+  redraw=false;
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+  tft.setTextSize(2);
+  tft.setCursor(10,12);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.print("SECURITY SYSTEM");
+  tft.setCursor(10,54);
+  tft.setTextColor(armed?ST77XX_RED:ST77XX_GREEN);
+  tft.setTextSize(3);
+  tft.print(armed?"LOCKED":"UNLOCKED");
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(10,115);
+  tft.print("Code: ");
+  tft.print(entered); // Show typed passcode for lab demo (not masked).
+  tft.setCursor(10,165);
+  tft.setTextSize(1);
+  tft.print("*=clear  #=enter");
+  tft.setCursor(10,188);
+  tft.print(peerOnline?"S3 linked":"S3 offline - local OK");
+  tft.setCursor(10,210);
+  tft.print("Pad: ");tft.print(keypadReady?"READY":"NOT FOUND");
+}
+void touchKey(char key){
+  Serial.printf("MPR121 key %c\n",key);
+  // ANY new touch after unlocking re-arms, per assignment.
+  if(!armed){changeState(true,"Touch after unlock");return;}
+  if(key=='*'){entered="";redraw=true;return;}
+  if(key=='#'){
+    if(entered==CODE) changeState(false,"Correct passcode");
+    else { Serial.println("Invalid passcode"); entered=""; redraw=true; }
+    return;
+  }
+  if(key>='0'&&key<='9'&&entered.length()<4){entered+=key;redraw=true;}
+}
+void setup(){
+  Serial.begin(115200);
+  rgb(80,0,0);
+  SPI.begin(LCD_SCLK,-1,LCD_MOSI,LCD_CS);
+  tft.init(240,240);
+  tft.setRotation(0);
+  tft.fillScreen(ST77XX_BLACK);
+  Wire.begin(SDA_PIN,SCL_PIN);
+  keypadReady=cap.begin(0x5A);
+  Serial.println(keypadReady?"MPR121 found at 0x5A":"MPR121 NOT FOUND at 0x5A - check wiring");
+  rxQueue=xQueueCreate(20,sizeof(Packet));
+  if(!rxQueue){Serial.println("Queue allocation FAILED");while(true)delay(1000);}
+  initEspNow();
+  Serial.println("C6 keypad ready: type 1234 # to unlock; any next touch locks");
+  publishState();
+  showScreen();
+}
+void loop(){
+  uint32_t now=millis();
+  Packet p;
+  while(xQueueReceive(rxQueue,&p,0)==pdTRUE)handlePacket(p);
+  if(keypadReady){
+    uint16_t current=cap.touched();
+    uint16_t newTouches=current & ~previousTouched;
+    previousTouched=current;
+    // Process one newly touched electrode; release before touching again.
+    for(uint8_t i=0;i<12;i++){
+      if(newTouches&(1U<<i)){touchKey(KEYS[i]);break;}
+    }
+  }
+  if(!armed&&now-unlockedAt>=AUTO_LOCK_MS)changeState(true,"Auto-lock 30s");
+  if(peerOnline&&now-lastPeerRx>PEER_TIMEOUT_MS){
+    peerOnline=false; Serial.println("S3 disconnected (keypad remains functional)");
+    flashBlue();redraw=true;
+  }
+  if(now-lastTx>=HEARTBEAT_MS)publishState();
+  showLed();
+  showScreen();
+  delay(15);
+}
