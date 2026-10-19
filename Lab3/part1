@@ -1,0 +1,134 @@
+/*
+ * ECE 4180 - Interrupts Part 1 (ESP32-S3 + CH9328)
+ * Based on Lab 2 Part 1. Same wiring, now uses GPIO interrupts.
+ *
+ * CH9328: Mode 3, raw 8-byte HID at 9600 baud
+ * DIP: SW3 ON, SW4 ON, SW2 OFF (unplug/replug after changes)
+ * ESP32 GPIO17 (UART1 TX) -> CH9328 RX, GND -> CH9328 GND
+ * CH9328 powered by its own USB; VCC/RST not connected to ESP32.
+ *
+ * Nav switch: COM -> GND; UP 4, DOWN 5, LEFT 6, RIGHT 7, CENTER 15.
+ * The ESP32-S3 onboard addressable RGB LED is usually GPIO48;
+ * use the board variant's RGB_BUILTIN definition when available.
+ */
+
+#include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
+constexpr int TX_PIN = 17;
+constexpr uint8_t BUTTON_PINS[5] = {4, 5, 6, 7, 15};
+constexpr uint8_t ARROW_KEYS[4] = {0x52, 0x51, 0x50, 0x4F}; // up down left right
+constexpr uint8_t KONAMI[10] = {0x52, 0x52, 0x51, 0x51, 0x50, 0x4F, 0x50, 0x4F, 0x05, 0x04};
+constexpr uint8_t RESET_KEY = 0x1D; // Z, clear previous Konami progress
+
+#if defined(RGB_BUILTIN)
+constexpr int LED_PIN = RGB_BUILTIN;
+#else
+constexpr int LED_PIN = 48; // common on ESP32-S3 DevKitC-1; verify board revision
+#endif
+
+// Event IDs: 0=up, 1=down, 2=left, 3=right, 4=center
+constexpr uint8_t CENTER_ID = 4;
+constexpr uint32_t DEBOUNCE_MS = 45;
+constexpr uint8_t QUEUE_LENGTH = 32;
+
+QueueHandle_t buttonEvents = nullptr;
+static uint8_t arrowArgs[4] = {0, 1, 2, 3}; // stable memory for ISR args
+static volatile TickType_t lastInterruptTick[5] = {0};
+static volatile bool seenInterrupt[5] = {false};
+uint32_t pressCount = 0;
+uint8_t ledColorIndex = 0;
+
+// Record an event, but don't do Serial, UART HID, delays, or LEDs inside ISR.
+void ARDUINO_ISR_ATTR enqueueButtonFromISR(uint8_t id) {
+  const TickType_t now = xTaskGetTickCountFromISR();
+  const TickType_t debounceTicks = pdMS_TO_TICKS(DEBOUNCE_MS) > 0 ? pdMS_TO_TICKS(DEBOUNCE_MS) : 1;
+
+  if (seenInterrupt[id] && (TickType_t)(now - lastInterruptTick[id]) < debounceTicks) {
+    return; // contact bounce for the same button
+  }
+  seenInterrupt[id] = true;
+  lastInterruptTick[id] = now;
+
+  BaseType_t higherPriorityTaskWoken = pdFALSE;
+  xQueueSendFromISR(buttonEvents, &id, &higherPriorityTaskWoken);
+  if (higherPriorityTaskWoken == pdTRUE) {
+    portYIELD_FROM_ISR();
+  }
+}
+
+// ONE shared ISR WITH ARGUMENTS for all four arrow buttons.
+void ARDUINO_ISR_ATTR arrowISR(void *arg) {
+  const uint8_t id = *static_cast<const uint8_t *>(arg);
+  enqueueButtonFromISR(id);
+}
+
+// Separate ISR WITHOUT ARGUMENTS for the center button.
+void ARDUINO_ISR_ATTR centerISR() {
+  enqueueButtonFromISR(CENTER_ID);
+}
+
+void tap(uint8_t key) {
+  uint8_t press[8] = {0, 0, key, 0, 0, 0, 0, 0};
+  uint8_t release[8] = {0};
+  Serial1.write(press, sizeof(press));
+  delay(50);
+  Serial1.write(release, sizeof(release));
+  delay(100);
+}
+
+void nextLedColor() {
+  // Six distinct colors. This work happens in loop(), not in an ISR.
+  static const uint8_t colors[][3] = {
+    {255, 0, 0}, {0, 255, 0}, {0, 0, 255},
+    {255, 255, 0}, {0, 255, 255}, {255, 0, 255}
+  };
+  const uint8_t *rgb = colors[ledColorIndex];
+  neopixelWrite(LED_PIN, rgb[0], rgb[1], rgb[2]);
+  ledColorIndex = (ledColorIndex + 1) % 6;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial1.begin(9600, SERIAL_8N1, -1, TX_PIN);
+
+  uint8_t release[8] = {0};
+  Serial1.write(release, sizeof(release)); // release any stuck HID key
+
+  for (uint8_t i = 0; i < 5; ++i) {
+    pinMode(BUTTON_PINS[i], INPUT_PULLUP);
+  }
+
+  buttonEvents = xQueueCreate(QUEUE_LENGTH, sizeof(uint8_t));
+  if (buttonEvents == nullptr) {
+    Serial.println("ERROR: button event queue creation failed");
+    while (true) delay(1000);
+  }
+
+  neopixelWrite(LED_PIN, 0, 0, 0);
+
+  for (uint8_t i = 0; i < 4; ++i) {
+    attachInterruptArg(BUTTON_PINS[i], arrowISR, &arrowArgs[i], FALLING);
+  }
+  attachInterrupt(BUTTON_PINS[CENTER_ID], centerISR, FALLING);
+  Serial.println("Interrupt-based CH9328 controller ready");
+}
+
+void loop() {
+  uint8_t id;
+  // Block until an ISR places an event into the queue.
+  if (xQueueReceive(buttonEvents, &id, portMAX_DELAY) != pdTRUE) return;
+
+  Serial.printf("press %lu on pin %u\n", (unsigned long)++pressCount, BUTTON_PINS[id]);
+  nextLedColor();
+
+  if (id < 4) {
+    tap(ARROW_KEYS[id]);
+  } else {
+    tap(RESET_KEY);
+    for (uint8_t k = 0; k < 10; ++k) {
+      tap(KONAMI[k]);
+    }
+  }
+}
