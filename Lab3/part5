@@ -1,0 +1,106 @@
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+
+
+const char *ssid     = "truc";
+const char *password = "batflash05";
+
+// Change the timezone if you want, e.g. America/Chicago, Europe/London
+const char *URL = "https://time.now/developer/api/time?timezone=America%2FNew_York";
+
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("Connected. IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void getTime() {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(10000);
+
+  if (!http.begin(client, URL)) {
+    Serial.println("http.begin() failed");
+    return;
+  }
+
+  int httpCode = http.GET();
+
+  // httpCode < 0  -> client-side error (DNS, connect, timeout...)
+  // httpCode > 0  -> HTTP status code from the server
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+
+    if (httpCode == HTTP_CODE_OK) {              // 200
+      String payload = http.getString();
+      Serial.println("Raw JSON:");
+      Serial.println(payload);
+
+      // Only keep the fields we need
+      JsonDocument filter;
+      filter["datetime"]     = true;
+      filter["timezone"]     = true;
+      filter["abbreviation"] = true;
+
+      JsonDocument doc;
+      DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+
+      if (err) {
+        Serial.print("JSON parse failed: ");
+        Serial.println(err.c_str());
+      } else {
+        // datetime looks like: 2026-01-09T13:32:18.812447-05:00
+        String dt   = doc["datetime"].as<String>();
+        String date = dt.substring(0, 10);      // 2026-01-09
+        String time = dt.substring(11, 19);     // 13:32:18
+
+        Serial.println("-----------------------------");
+        Serial.print("Timezone : "); Serial.println(doc["timezone"].as<String>());
+        Serial.print("Date     : "); Serial.println(date);
+        Serial.print("Time     : "); Serial.print(time);
+        Serial.print(" ");           Serial.println(doc["abbreviation"].as<String>());
+        Serial.println("-----------------------------");
+      }
+    } else if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND) {
+      Serial.println("Server redirected us. Check the URL.");
+    } else if (httpCode == HTTP_CODE_NOT_FOUND) {
+      // Time.now returns JSON like {"code":"timezone_not_found","error":"..."}
+      Serial.println("Bad timezone name: " + http.getString());
+    } else {
+      // Any other status: 404, 429 (rate limited), 500, 503...
+      Serial.printf("Server returned an error status: %d\n", httpCode);
+    }
+  } else {
+    Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  connectWiFi();
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi lost, reconnecting...");
+    connectWiFi();
+  }
+  getTime();
+  delay(10000);   
+}
