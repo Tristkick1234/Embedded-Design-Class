@@ -1,6 +1,6 @@
 
 ## Architecture Overview
-![Architecture](Architecture (1).png)
+![Architecture](Architecture2.png)
 
 ## Problem Statement and Contextualization
 Georgia Tech's campus is roughly 400 acres in size, with approximately 15 million square feet of building space across more than 160 buildings. With this amount of space, its traversal becomes a question for the student. 
