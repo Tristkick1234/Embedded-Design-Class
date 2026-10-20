@@ -9,3 +9,5 @@ From most residence halls on campus, students can expect a 15 to 20 minute walk;
 
 ## Solution statement
 Buzz Loc's objective is to make Stinger bus locations accessible offline for students, staff, and visitors of Georgia Tech.
+
+#
