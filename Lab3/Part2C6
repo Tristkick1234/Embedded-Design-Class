@@ -140,37 +140,30 @@ void touchKey(char key){
 
 void setup(){
   Serial.begin(115200);
+  delay(2000);                       // lets the monitor attach before any crash
+  Serial.println("1: boot");
   rgb(80,0,0);
+  Serial.println("2: rgb ok");
   SPI.begin(LCD_SCLK,-1,LCD_MOSI,LCD_CS);
+  Serial.println("3: spi ok");
   tft.init(240,240);
+  Serial.println("4: tft init ok");
   tft.setRotation(0);
   tft.fillScreen(ST77XX_BLACK);
-  
-  // Initialize MPR121.
-  Wire.begin(SDA_PIN, SCL_PIN);
-
-  keypadReady = cap.begin(0x5A, &Wire);
-
-  if (keypadReady) {
-    Serial.println("MPR121 found at 0x5A");
-
-    // Enable automatic electrode configuration.
-    cap.setAutoconfig(true);
-
-    Serial.println("MPR121 auto configuration enabled.");
-  }
-  else {
-    Serial.println("MPR121 NOT FOUND at 0x5A - check wiring");
-  }
-
+  Serial.println("5: tft fill ok");
+  Wire.begin(SDA_PIN,SCL_PIN);
+  keypadReady=cap.begin(0x5A);
+  if(keypadReady) cap.setAutoconfig(true);
+  Serial.println(keypadReady?"6: MPR121 ok":"6: MPR121 NOT FOUND");
   rxQueue=xQueueCreate(20,sizeof(Packet));
   if(!rxQueue){Serial.println("Queue allocation FAILED");while(true)delay(1000);}
+  Serial.println("7: queue ok");
   initEspNow();
-  Serial.println("C6 keypad ready: touch pads 1,2,3,4 to unlock automatically; any next touch locks");
-  Serial.println("Touch debug: each new electrode press/release prints below.");
-  if (!keypadReady) Serial.println("Touch debug unavailable: MPR121 did not initialize. Check SDA=4, SCL=5, power, and 0x5A address.");
+  Serial.println("8: espnow ok");
   publishState();
+  Serial.println("9: first publish ok");
   showScreen();
+  Serial.println("10: setup done");
 }
 void loop(){
   uint32_t now=millis();
