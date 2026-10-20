@@ -145,9 +145,24 @@ void setup(){
   tft.init(240,240);
   tft.setRotation(0);
   tft.fillScreen(ST77XX_BLACK);
-  Wire.begin(SDA_PIN,SCL_PIN);
-  keypadReady=cap.begin(0x5A);
-  Serial.println(keypadReady?"MPR121 found at 0x5A":"MPR121 NOT FOUND at 0x5A - check wiring");
+  
+  // Initialize MPR121.
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  keypadReady = cap.begin(0x5A, &Wire);
+
+  if (keypadReady) {
+    Serial.println("MPR121 found at 0x5A");
+
+    // Enable automatic electrode configuration.
+    cap.setAutoconfig(true);
+
+    Serial.println("MPR121 auto configuration enabled.");
+  }
+  else {
+    Serial.println("MPR121 NOT FOUND at 0x5A - check wiring");
+  }
+
   rxQueue=xQueueCreate(20,sizeof(Packet));
   if(!rxQueue){Serial.println("Queue allocation FAILED");while(true)delay(1000);}
   initEspNow();
