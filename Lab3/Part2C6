@@ -123,47 +123,87 @@ void showScreen(){
   tft.setCursor(10,215);
   tft.print("Pad: ");tft.print(keypadReady?"READY":"NOT FOUND");
 }
-void touchKey(char key){
-  Serial.printf("MPR121 key %c\n",key);
-  // Any NEW touch after unlocking re-arms, as required by the lab.
-  if(!armed){changeState(true,"Touch after unlock");return;}
-  if(key=='C'){entered="";redraw=true;Serial.println("Entry cleared");return;}
-  if(key>='0'&&key<='9'&&entered.length()<4){
-    entered+=key;
-    redraw=true;
-    if(entered.length()==4){
-      if(entered==CODE) changeState(false,"Correct passcode");
-      else {Serial.println("Invalid passcode");entered="";redraw=true;}
+
+void touchKey(char key) {
+  Serial.printf("MPR121 key pressed: %c\n", key);
+
+  // If unlocked, a new touch locks the system.
+  if (!armed) {
+    changeState(true, "Keypad re-lock");
+    return;
+  }
+
+  // Pads 10 and 11 clear the passcode.
+  if (key == 'C') {
+    entered = "";
+    redraw = true;
+    Serial.println("Passcode cleared");
+    return;
+  }
+
+  // Accept digits 0 through 9.
+  if (key >= '0' && key <= '9') {
+    entered += key;
+    redraw = true;
+
+    Serial.printf(
+      "Current passcode: %s\n",
+      entered.c_str()
+    );
+
+    // Check automatically after four digits.
+    if (entered.length() == 4) {
+
+      if (entered == "1234") {
+        Serial.println("CORRECT PASSCODE - UNLOCKING");
+
+        // Unlock system and notify the S3 via ESP-NOW.
+        changeState(false, "Correct passcode");
+
+      } else {
+        Serial.println("INCORRECT PASSCODE");
+
+        entered = "";
+        redraw = true;
+      }
     }
   }
 }
 
+
 void setup(){
   Serial.begin(115200);
-  delay(2000);                       // lets the monitor attach before any crash
-  Serial.println("1: boot");
   rgb(80,0,0);
-  Serial.println("2: rgb ok");
   SPI.begin(LCD_SCLK,-1,LCD_MOSI,LCD_CS);
-  Serial.println("3: spi ok");
   tft.init(240,240);
-  Serial.println("4: tft init ok");
   tft.setRotation(0);
   tft.fillScreen(ST77XX_BLACK);
-  Serial.println("5: tft fill ok");
-  Wire.begin(SDA_PIN,SCL_PIN);
-  keypadReady=cap.begin(0x5A);
-  if(keypadReady) cap.setAutoconfig(true);
-  Serial.println(keypadReady?"6: MPR121 ok":"6: MPR121 NOT FOUND");
+
+  // Initialize MPR121.
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  keypadReady = cap.begin(0x5A, &Wire);
+
+  if (keypadReady) {
+    Serial.println("MPR121 found at 0x5A");
+
+    // Enable automatic electrode configuration.
+    cap.setAutoconfig(true);
+
+    Serial.println("MPR121 auto configuration enabled.");
+  }
+  else {
+    Serial.println("MPR121 NOT FOUND at 0x5A - check wiring");
+  }
+
   rxQueue=xQueueCreate(20,sizeof(Packet));
   if(!rxQueue){Serial.println("Queue allocation FAILED");while(true)delay(1000);}
-  Serial.println("7: queue ok");
   initEspNow();
-  Serial.println("8: espnow ok");
+  Serial.println("C6 keypad ready: touch pads 1,2,3,4 to unlock automatically; any next touch locks");
+  Serial.println("Touch debug: each new electrode press/release prints below.");
+  if (!keypadReady) Serial.println("Touch debug unavailable: MPR121 did not initialize. Check SDA=4, SCL=5, power, and 0x5A address.");
   publishState();
-  Serial.println("9: first publish ok");
   showScreen();
-  Serial.println("10: setup done");
 }
 void loop(){
   uint32_t now=millis();
@@ -188,7 +228,17 @@ void loop(){
       if(newTouches&(1U<<i)){touchKey(KEYS[i]);break;}
     }
   }
-  if(!armed&&now-unlockedAt>=AUTO_LOCK_MS)changeState(true,"Auto-lock 30s");
+  
+  // Automatically lock 30 seconds after unlocking.
+  // Read millis() AFTER processing keypad events.
+  if (!armed) {
+    uint32_t elapsed = millis() - unlockedAt;
+
+    if (elapsed >= AUTO_LOCK_MS) {
+      changeState(true, "Auto-lock 30s");
+    }
+  }
+
   if(peerOnline&&now-lastPeerRx>PEER_TIMEOUT_MS){
     peerOnline=false; Serial.println("S3 disconnected (keypad remains functional)");
     flashBlue();redraw=true;
