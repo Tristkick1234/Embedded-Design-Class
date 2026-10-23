@@ -1,0 +1,395 @@
+
+/*
+ * ECE4180 - Part 6: FindMyESP32
+ *
+ * Board: ESP32-C6
+ *
+ * Scan three BLE beacons without connecting.
+ * Estimate position using RSSI and weighted centroid.
+ * Display the estimated position on a Wi-Fi webpage.
+ */
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <BLEDevice.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+#include <math.h>
+
+// --------------------------------
+// Wi-Fi webpage
+// --------------------------------
+
+const char* ssid = "FindMyESP32";
+const char* password = "ece4180";
+
+WebServer server(80);
+
+// --------------------------------
+// Localization constants
+// --------------------------------
+
+const float EMA_ALPHA = 0.25f;
+const float PATH_LOSS_EXPONENT = 2.2f;
+
+// Placeholder reference RSSI at 1 meter.
+// Replace with values from the TA.
+const int REFERENCE_RSSI = -60;
+
+// Ignore beacon readings older than 10 sec
+const unsigned long TIMEOUT_MS = 10000;
+
+// --------------------------------
+// Beacon structure
+// --------------------------------
+
+struct AnchorTrack {
+  const char* name;
+
+  float x;
+  float y;
+
+  int txPower1m;
+
+  float filteredRssi;
+  float estimatedDist;
+
+  int sampleCount;
+  unsigned long lastSeen;
+};
+
+// TA-provided coordinates
+AnchorTrack anchors[3] = {
+  {"Beacon A", 0, 0, REFERENCE_RSSI, -100, 0, 0, 0},
+  {"Beacon B", 0, 8, REFERENCE_RSSI, -100, 0, 0, 0},
+  {"Beacon C", 6, 4, REFERENCE_RSSI, -100, 0, 0, 0}
+};
+
+float estimatedX = 0;
+float estimatedY = 0;
+
+bool positionValid = false;
+
+BLEScan* pBLEScan;
+
+// --------------------------------
+// BLE callback
+// --------------------------------
+
+class MyAdvertisedDeviceCallbacks :
+  public BLEAdvertisedDeviceCallbacks {
+
+  void onResult(BLEAdvertisedDevice device) override {
+
+    String name = String(device.getName().c_str());
+
+    int anchorIndex = -1;
+
+    // Only process Beacon A, B, and C
+    for (int i = 0; i < 3; i++) {
+      if (name == anchors[i].name) {
+        anchorIndex = i;
+        break;
+      }
+    }
+
+    if (anchorIndex < 0) {
+      return;
+    }
+
+    int rawRssi = device.getRSSI();
+
+    AnchorTrack& anc = anchors[anchorIndex];
+
+    // --------------------------------
+    // EMA filtering
+    // --------------------------------
+
+    if (anc.sampleCount == 0 ||
+        anc.filteredRssi < -95.0f) {
+
+      anc.filteredRssi = (float)rawRssi;
+
+    } else {
+
+      anc.filteredRssi =
+        EMA_ALPHA * (float)rawRssi +
+        (1.0f - EMA_ALPHA) * anc.filteredRssi;
+    }
+
+    anc.sampleCount++;
+    anc.lastSeen = millis();
+
+    // --------------------------------
+    // RSSI to distance
+    // d = 10 ^ ((A - RSSI) / (10*n))
+    // --------------------------------
+
+    float exponent =
+      ((float)anc.txPower1m -
+       anc.filteredRssi) /
+      (10.0f * PATH_LOSS_EXPONENT);
+
+    anc.estimatedDist = powf(10.0f, exponent);
+
+    Serial.printf(
+      "%s | RSSI: %d | Filtered: %.1f | Distance: %.2f\n",
+      anc.name,
+      rawRssi,
+      anc.filteredRssi,
+      anc.estimatedDist
+    );
+  }
+};
+
+// --------------------------------
+// Weighted centroid localization
+// --------------------------------
+
+void calculatePosition() {
+
+  float totalWeight = 0;
+  float xSum = 0;
+  float ySum = 0;
+
+  int found = 0;
+
+  unsigned long now = millis();
+
+  for (int i = 0; i < 3; i++) {
+
+    AnchorTrack& a = anchors[i];
+
+    // Ignore missing or outdated beacons
+    if (a.sampleCount == 0 ||
+        now - a.lastSeen > TIMEOUT_MS) {
+      continue;
+    }
+
+    // Weight = 1 / estimated distance
+    float weight =
+      1.0f / (a.estimatedDist + 0.000001f);
+
+    xSum += a.x * weight;
+    ySum += a.y * weight;
+
+    totalWeight += weight;
+    found++;
+  }
+
+  if (found == 3 && totalWeight > 0) {
+
+    estimatedX = xSum / totalWeight;
+    estimatedY = ySum / totalWeight;
+
+    positionValid = true;
+
+    Serial.printf(
+      "Estimated Position: (%.2f, %.2f)\n",
+      estimatedX,
+      estimatedY
+    );
+
+  } else {
+
+    positionValid = false;
+
+    Serial.printf(
+      "Waiting for beacons: %d/3\n",
+      found
+    );
+  }
+}
+
+// --------------------------------
+// Webpage
+// --------------------------------
+
+void handleRoot() {
+
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="3">
+
+<title>FindMyESP32</title>
+
+<style>
+body {
+  font-family: Arial;
+  text-align: center;
+  background: #f3f4f6;
+  margin: 20px;
+}
+
+.card {
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  margin: 15px auto;
+  max-width: 400px;
+}
+
+h1 {
+  color: #2563eb;
+}
+
+.position {
+  font-size: 30px;
+  font-weight: bold;
+  color: green;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+td, th {
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+}
+</style>
+</head>
+
+<body>
+
+<h1>FindMyESP32</h1>
+
+<div class="card">
+<h2>Estimated Position</h2>
+)rawliteral";
+
+  if (positionValid) {
+
+    html += "<p class='position'>(";
+    html += String(estimatedX, 2);
+    html += ", ";
+    html += String(estimatedY, 2);
+    html += ")</p>";
+
+  } else {
+
+    html += "<p>Waiting for three beacons...</p>";
+  }
+
+  html += R"rawliteral(
+</div>
+
+<div class="card">
+<h2>Beacon Information</h2>
+
+<table>
+<tr>
+<th>Beacon</th>
+<th>RSSI</th>
+<th>Distance</th>
+</tr>
+)rawliteral";
+
+  unsigned long now = millis();
+
+  for (int i = 0; i < 3; i++) {
+
+    AnchorTrack& a = anchors[i];
+
+    html += "<tr><td>";
+    html += a.name;
+    html += "</td><td>";
+
+    if (a.sampleCount > 0 &&
+        now - a.lastSeen <= TIMEOUT_MS) {
+
+      html += String(a.filteredRssi, 1);
+      html += "</td><td>";
+      html += String(a.estimatedDist, 2);
+
+    } else {
+
+      html += "N/A</td><td>N/A";
+    }
+
+    html += "</td></tr>";
+  }
+
+  html += R"rawliteral(
+</table>
+</div>
+
+</body>
+</html>
+)rawliteral";
+
+  server.send(200, "text/html", html);
+}
+
+// --------------------------------
+// Setup
+// --------------------------------
+
+void setup() {
+
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println("Starting FindMyESP32");
+
+  // Create Wi-Fi network
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ssid, password);
+
+  Serial.print("Wi-Fi IP Address: ");
+  Serial.println(WiFi.softAPIP());
+
+  // Start web server
+  server.on("/", handleRoot);
+  server.begin();
+
+  Serial.println("Web server started");
+
+  // Initialize BLE scanner
+  BLEDevice::init("");
+
+  pBLEScan = BLEDevice::getScan();
+
+  pBLEScan->setAdvertisedDeviceCallbacks(
+    new MyAdvertisedDeviceCallbacks(),
+    true
+  );
+
+  pBLEScan->setActiveScan(true);
+
+  pBLEScan->setInterval(100);
+  pBLEScan->setWindow(99);
+
+  Serial.println("Scanning for BLE beacons...");
+}
+
+// --------------------------------
+// Main loop
+// --------------------------------
+
+void loop() {
+
+  // Handle webpage requests
+  server.handleClient();
+
+  // Scan BLE advertisements for 1 second
+  // No beacon connections are established.
+  pBLEScan->start(1, false);
+
+  // Free scan result memory
+  pBLEScan->clearResults();
+
+  // Calculate estimated location
+  calculatePosition();
+
+  // Update webpage requests
+  server.handleClient();
+
+  delay(100);
+}
